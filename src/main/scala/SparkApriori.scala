@@ -1,6 +1,7 @@
 import org.apache.spark.internal.Logging
 import org.apache.spark.rdd.RDD
 
+import scala.collection.immutable.HashSet
 import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
 
@@ -28,24 +29,24 @@ class SparkApriori(
     this
   }
 
-  def run(transactions: RDD[Array[Int]]): RDD[Array[Int]] = {
+  def run(data: RDD[Array[String]]): RDD[(HashSet[String], Long)] = {
     // NOTE: transactions should be cached
-    val spark = transactions.sparkContext
-    val numPartitions = transactions.getNumPartitions
+    val spark = data.sparkContext
+    val numPartitions = data.getNumPartitions
 
-    val cnt = transactions.count()
+    val transactions = data.map(_.toSet).cache()
+
+    val cnt = data.count()
     val minSupportCnt = math.round(cnt * minSupport)
 
     // F-1 items
-    val freq1Items = transactions.flatMap { t =>
-      t.toSet.map(item => (item, 1L))
+    var freqItems = data.flatMap { t =>
+      t.toSet.toList.map{item: String => (HashSet(item), 1L)}
     }.reduceByKey(_ + _, numPartitions)
       .filter(_._2 >= minSupportCnt)
-      .collect()
-      .sortBy(_._1)
 
     var iter = 0
-    var iterFreqItems = freq1Items.map{case (item, freq) => item.toString}
+    var iterFreqItems = freqItems.collect()
 
     while (iterFreqItems.length > 0 && iter < maxIterations) {
       iter += 1
@@ -56,38 +57,50 @@ class SparkApriori(
       val filteredFreqItems = transactions.mapPartitions { tranParts =>
         val candidates = candidatesBC.value
 
-        tranParts.flatMap {
-          val itemsCnts = new Array[Long](candidates.length)
-          val set = new mutable.HashSet[String]()
-          set.subsets()
+        tranParts.flatMap {tran =>
+          var validCandidates = new ArrayBuffer[(HashSet[String], Long)]()
+          for (cand <- candidates) {
+            var valid = true
+            for (item <- cand) {
+              if (!tran.contains(item)) {
+                valid = false
+              }
+            }
+            if (valid) {
+              validCandidates += Tuple2(cand, 1L)
+            }
+          }
 
-          null
+          validCandidates
         }
-      }
+      }.reduceByKey(_ + _, numPartitions).filter(_._2 >= minSupportCnt)
+
+      freqItems = freqItems.union(filteredFreqItems)
+
+      iterFreqItems = filteredFreqItems.collect()
+      candidatesBC.destroy()
     }
 
-    null
+    freqItems
   }
 
- def genCandidates(freqItems: Array[String], k: Int): Array[String] = {
-   val freqItemsSet = freqItems.toSet
-   val preFreqItems = freqItems.map(_.split(" ").map(_.toInt).toSet)
+ def genCandidates(freqItems: Array[(HashSet[String], Long)], k: Int): Array[HashSet[String]] = {
+   var candidates = new ArrayBuffer[HashSet[String]]()
+   val contained = new mutable.HashSet[String]
 
-   var nextFreqItems = new ArrayBuffer[String]()
-
-   for (i <- preFreqItems.indices) {
+   for (i <- freqItems.indices) {
      for (j <- 0 until i) {
-       val itemsSet = preFreqItems(i).union(preFreqItems(j))
+       val itemsSet = freqItems(i)._1.union(freqItems(j)._1)
        if (itemsSet.size == k) {
-         val items: String = itemsSet.toArray.sortBy(_).mkString(" ")
-         if (freqItemsSet.contains(items)) {
-//            nextFreqItem += items
+         val items: String = itemsSet.toArray.sorted.mkString(" ")
+         if (!contained.contains(items)) {
+           candidates += itemsSet
+           contained.add(items)
          }
        }
      }
    }
-
-   null
+   candidates.toArray
  }
 
 }
