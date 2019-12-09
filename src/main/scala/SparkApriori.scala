@@ -29,7 +29,7 @@ class SparkApriori(
     this
   }
 
-  def run(data: RDD[Array[String]]): RDD[(HashSet[String], Long)] = {
+  def run(data: RDD[Array[String]]): RDD[(Array[String], Long)] = {
     // NOTE: transactions should be cached
     val spark = data.sparkContext
     val numPartitions = data.getNumPartitions
@@ -50,6 +50,8 @@ class SparkApriori(
 
     while (iterFreqItems.length > 0 && iter < maxIterations) {
       iter += 1
+
+      logWarning(s"Iteration $iter: number of F-${iter+1} items: ${iterFreqItems.length}")
 
       val candidates = genCandidates(iterFreqItems, iter+1)
       val candidatesBC = spark.broadcast(candidates)
@@ -81,7 +83,7 @@ class SparkApriori(
       candidatesBC.destroy()
     }
 
-    freqItems
+    freqItems.map(tp => (tp._1.toArray, tp._2))
   }
 
  def genCandidates(freqItems: Array[(HashSet[String], Long)], k: Int): Array[HashSet[String]] = {

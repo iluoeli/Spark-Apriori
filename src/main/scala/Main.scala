@@ -8,6 +8,7 @@ object Main {
     val input = args(0)
     val output = args(1)
     val minSupport = args(2).toDouble
+    val numPartitions = if (args.length >= 4) args(0).toInt else 50
 
     val conf = new SparkConf()
       .setAppName("SparkApriori")
@@ -15,7 +16,7 @@ object Main {
     val spark = new SparkContext(conf)
     spark.setLogLevel("WARN")
 
-    val data = spark.textFile(input).map(line => line.split(" "))
+    val data = spark.textFile(input, numPartitions).map(line => line.split(" "))
 
     val apriori = new SparkApriori()
       .setMinSupport(minSupport)
